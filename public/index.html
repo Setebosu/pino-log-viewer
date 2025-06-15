@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Log Viewer Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    nav button { margin-right: 10px; padding: 8px 12px; cursor: pointer; }
+    .tab-content { display: none; }
+    .active { display: block; }
+    canvas { margin-top: 20px; }
+    #fileList li { list-style: none; margin-bottom: 5px; }
+    #dropZone { border: 2px dashed #888; padding: 20px; text-align: center; margin: 10px 0; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <button onclick="showTab('uploadTab')">Upload</button>
+    <button onclick="showTab('browseTab'); listLogs()">Browse</button>
+    <button onclick="showTab('dashboardTab')">Dashboard</button>
+  </nav>
+
+  <!-- Upload Tab -->
+  <div id="uploadTab" class="tab-content active">
+    <h2>Upload Logs (.zip)</h2>
+    <div id="dropZone" ondragover="event.preventDefault()" ondrop="handleDrop(event)">
+      Drag & Drop .zip File Here
+    </div>
+    <input type="file" id="fileInput" accept=".zip" />
+    <button onclick="uploadFile()">Upload ZIP</button>
+    <button onclick="deleteLogs()">Delete All Logs</button>
+  </div>
+
+  <!-- Browse Tab -->
+  <div id="browseTab" class="tab-content">
+    <h2>Browse Logs</h2>
+    <select id="levelFilter">
+      <option value="">All</option>
+      <option value="trace">Trace</option>
+      <option value="debug">Debug</option>
+      <option value="info">Info</option>
+      <option value="warn">Warn</option>
+      <option value="error">Error</option>
+      <option value="fatal">Fatal</option>
+    </select>
+    <!-- <button onclick="updateView()">Refresh</button> -->
+    <div id="currentPath"></div>
+    <ul id="fileList"></ul>
+  </div>
+
+  <!-- Dashboard Tab -->
+  <div id="dashboardTab" class="tab-content">
+    <h2>Dashboard</h2>
+    <ul id="fileList"></ul>
+    <canvas id="levelChart" width="600" height="300"></canvas>
+    <canvas id="nameChart" width="600" height="300"></canvas>
+    <canvas id="messageChart" width="600" height="300"></canvas>
+  </div>
+
+  <script>
+    let levelChart, messageChart, nameChart;
+
+    function showTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(div => div.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+    }
+
+    async function uploadFile(file = null) {
+      const input = document.getElementById('fileInput');
+      file = file || input.files[0];
+      if (!file || !file.name.endsWith('.zip')) return alert('Select a ZIP file');
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/upload', { method: 'POST', body: formData });
+      const result = await res.json();
+      alert(result.message || 'Uploaded');
+      listLogs();
+    }
+
+    function handleDrop(event) {
+      event.preventDefault();
+      const file = event.dataTransfer.files[0];
+      if (file && file.name.endsWith('.zip')) uploadFile(file);
+      else alert('Only .zip files are supported');
+    }
+
+    async function deleteLogs() {
+      if (!confirm('Delete all logs?')) return;
+      const res = await fetch('/clear-logs');
+      const result = await res.json();
+      alert(result.message || 'Deleted');
+      listLogs();
+    }
+
+    async function fetchLogs(fp = '', level) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const query = level ? `?level=${level}` : '';
+      const res = await fetch(`/logger-file/${encodeURIComponent(fp)}${query}`);
+      const json = await res.json();
+      return Array.isArray(json) ? json : [];
+    }
+
+    function groupByLevel(logs) {
+      return logs.reduce((acc, log) => {
+        acc[log.level] = (acc[log.level] || 0) + 1;
+        return acc;
+      }, {});
+    }
+
+    function groupByMessage(logs) {
+        if (logs.length === 0) return {};
+        return logs.reduce((acc, log) => {
+            const message = log.result?.message || log.message?.message || log.result || log.message || log.msg;
+            const msg = typeof message === 'object' && message ? JSON.stringify(message) : message; // Convert object to string if needed
+            if (!message) return acc; // Skip if no message
+            acc[message] = (acc[message] || 0) + 1;
+            return acc;
+        }, {});
+    }
+
+    function groupByName(logs) {
+        if (logs.length === 0) return {};
+        return logs.reduce((acc, log) => {
+            const { name = 'unnamed' } = log;
+            acc[name] = (acc[name] || 0) + 1;
+            return acc;
+        }, {});
+    }
+
+    function renderChart(chart, ctx, labels, data, label) {
+      if (chart) chart.destroy();
+      return new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label,
+            data,
+            backgroundColor: 'rgba(75, 192, 192, 0.5)',
+            borderColor: 'rgba(75, 192, 192, 1)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    async function updateView(fp = '') {
+      // debugger;
+      const level = document.getElementById('levelFilter')?.value;
+      const logs = await fetchLogs(fp, level);
+
+      const fileList = document.getElementById('fileList');
+
+      if (!fileList) {
+        console.log('updateView: no fileList element found');
+        return;
+      }
+
+      fileList.innerHTML = '';
+
+      // list of directories
+      if (!logs[0].time && !logs[0].timestamp) {
+        fileList.innerHTML = '<li>No logs found</li>';
+        return;
+      }
+
+      console.log('updateView: log list');
+      // list of logs from the file
+      logs.forEach(log => {
+        const li = document.createElement('li');
+        li.textContent = `[${new Date(log.time || log.timestamp).toLocaleString()}] (${log.level}) ${JSON.stringify(log.result || log.message || log.msg || log.result?.message || log)}`;
+        fileList.appendChild(li);
+      });
+
+      levelChart = renderChart(
+        levelChart,
+        document.getElementById('levelChart'),
+        Object.keys(groupByLevel(logs)),
+        Object.values(groupByLevel(logs)),
+        'Logs by Level'
+      );
+
+      messageChart = renderChart(
+        messageChart,
+        document.getElementById('messageChart'),
+        Object.keys(groupByMessage(logs)),
+        Object.values(groupByMessage(logs)),
+        'Logs by message'
+      );
+
+      nameChart = renderChart(
+        nameChart,
+        document.getElementById('nameChart'),
+        Object.keys(groupByName(logs)),
+        Object.values(groupByName(logs)),
+        'Logs by name '
+      );
+    }
+
+    async function listLogs(dir = '') {
+      // debugger;
+      const res = await fetch(`/logger-file/${encodeURIComponent(dir)}`);
+      const list = res.status === 200 ? await res.json() : await res.text();
+
+      if (res.status !== 200) {
+        alert(`Error: ${list}`);
+        return;
+      }
+
+      const fileList = document.getElementById('fileList');
+      const currentPath = document.getElementById('currentPath');
+
+      currentPath.textContent = `Path: /${dir}`;
+      fileList.innerHTML = '';
+
+      if (dir) {
+        const parent = dir.split('/').slice(0, -1).join('/');
+        fileList.innerHTML += `<li><a href="#" onclick="listLogs('${parent}')">[..]</a></li>`;
+      }
+
+      console.log('listLogs');
+
+      list.forEach(entry => {
+        const link = entry.type === 'dir'
+          ? `<a href="#" onclick="listLogs('${entry.path}')">${entry.name}/</a>`
+          : `<a href="#" onclick="updateView('${entry.path}')">${entry.name}</a> (${entry.size} bytes)`; // `<a href="/logger-file/${entry.path}">${entry.name}</a> (${entry.size} bytes)`
+        fileList.innerHTML += `<li>${link}</li>`;
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const tab = new URLSearchParams(window.location.search).get('tab');
+      if (tab) showTab(`${tab}Tab`);
+      listLogs();
+    });
+  </script>
+
+</body>
+</html>
