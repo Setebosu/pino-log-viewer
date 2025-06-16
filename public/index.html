@@ -45,7 +45,7 @@
       <option value="error">Error</option>
       <option value="fatal">Fatal</option>
     </select>
-    <!-- <button onclick="updateView()">Refresh</button> -->
+    <button onclick="updateView();listLogs()">Refresh</button>
     <div id="currentPath"></div>
     <ul id="fileList"></ul>
   </div>
@@ -54,13 +54,14 @@
   <div id="dashboardTab" class="tab-content">
     <h2>Dashboard</h2>
     <ul id="fileList"></ul>
+    <canvas id="logsOverTimeChart" width="600" height="300"></canvas>
     <canvas id="levelChart" width="600" height="300"></canvas>
     <canvas id="nameChart" width="600" height="300"></canvas>
     <canvas id="messageChart" width="600" height="300"></canvas>
   </div>
 
   <script>
-    let levelChart, messageChart, nameChart;
+    let levelChart, messageChart, nameChart, logsOverTimeChart;
 
     function showTab(tabId) {
       document.querySelectorAll('.tab-content').forEach(div => div.classList.remove('active'));
@@ -90,7 +91,7 @@
 
     async function deleteLogs() {
       if (!confirm('Delete all logs?')) return;
-      const res = await fetch('/clear-logs');
+      const res = await fetch('/logs/', { method: 'DELETE' });
       const result = await res.json();
       alert(result.message || 'Deleted');
       listLogs();
@@ -99,7 +100,8 @@
     async function fetchLogs(fp = '', level) {
       const urlParams = new URLSearchParams(window.location.search);
       const query = level ? `?level=${level}` : '';
-      const res = await fetch(`/logger-file/${encodeURIComponent(fp)}${query}`);
+      // debugger;
+      const res = await fetch(`/logs/${encodeURIComponent(fp)}${query}`);
       const json = await res.json();
       return Array.isArray(json) ? json : [];
     }
@@ -129,6 +131,19 @@
             acc[name] = (acc[name] || 0) + 1;
             return acc;
         }, {});
+    }
+
+    function groupByTimeStamp(logs) {
+      const grouped = {};
+
+      logs.forEach(log => {
+        // debugger;
+        const date = new Date(log.time || log.timestamp);
+        const key = date.toLocaleString('uk-UA');
+        grouped[key] = (grouped[key] || 0) + 1;
+      });
+
+      return grouped;
     }
 
     function renderChart(chart, ctx, labels, data, label) {
@@ -173,10 +188,14 @@
       }
 
       console.log('updateView: log list');
+
+      fileList.innerHTML += `<li><a href="#" onclick="listLogs()">[...]</a></li>`;
+  
       // list of logs from the file
       logs.forEach(log => {
         const li = document.createElement('li');
-        li.textContent = `[${new Date(log.time || log.timestamp).toLocaleString()}] (${log.level}) ${JSON.stringify(log.result || log.message || log.msg || log.result?.message || log)}`;
+        const message = log.result?.message || log.message?.message || log.result || log.message || log.msg;
+        li.textContent = `[${new Date(log.time || log.timestamp).toLocaleString()}] (${log.level}) ${JSON.stringify(message || log)}`;
         fileList.appendChild(li);
       });
 
@@ -203,11 +222,26 @@
         Object.values(groupByName(logs)),
         'Logs by name '
       );
+
+      const hourlyCounts = groupByTimeStamp(logs);
+      const hourlyLabels = Object.keys(hourlyCounts);
+      const hourlyData = Object.values(hourlyCounts);
+
+      logsOverTimeChart = renderChart(
+        logsOverTimeChart,
+        document.getElementById('logsOverTimeChart'),
+        hourlyLabels,
+        hourlyData,
+        'Logs Over Time (per hour)'
+      );
     }
 
     async function listLogs(dir = '') {
       // debugger;
-      const res = await fetch(`/logger-file/${encodeURIComponent(dir)}`);
+      const level = document.getElementById('levelFilter')?.value;
+      const query = level ? `?level=${level}&list=1` : '?list=1';
+      const url = `/logs/${encodeURIComponent(dir || (window.location.pathname === '/' ? '' : window.location.hash.replace(/\#/g, '')))}${query}`;
+      const res = await fetch(url);
       const list = res.status === 200 ? await res.json() : await res.text();
 
       if (res.status !== 200) {
@@ -218,20 +252,22 @@
       const fileList = document.getElementById('fileList');
       const currentPath = document.getElementById('currentPath');
 
-      currentPath.textContent = `Path: /${dir}`;
+      currentPath.textContent = `Path: /${dir || window.location.hash.replace(/\#/g, '')}`;
       fileList.innerHTML = '';
 
-      if (dir) {
+      /* if (dir || window.location.hash.replace(/\#/g, '')) {
         const parent = dir.split('/').slice(0, -1).join('/');
         fileList.innerHTML += `<li><a href="#" onclick="listLogs('${parent}')">[..]</a></li>`;
-      }
+      } */
+
+      fileList.innerHTML += `<li><a href="#" onclick="listLogs()">[...]</a></li>`;
 
       console.log('listLogs');
 
       list.forEach(entry => {
         const link = entry.type === 'dir'
-          ? `<a href="#" onclick="listLogs('${entry.path}')">${entry.name}/</a>`
-          : `${entry.path} <a href="#" onclick="updateView('${entry.path}')"> preview </a><a href="/logger-file/${entry.path}" target="_blank">parse</a> (${entry.size} bytes)`;
+          ? `${entry.path}<a href="#${entry.path}" onclick="updateView('${entry.path}')"> preview </a><a href="/logs/${entry.path}${level ? `?level=${level}` : ''}" target="_blank"> parse </a> <a href="#${entry.path}" onclick="listLogs('${entry.path}')"> browse </a>`
+          : `${entry.path} <a href="#${entry.path}" onclick="updateView('${entry.path}')"> preview </a><a href="/logs/${entry.path}${level ? `?level=${level}` : ''}" target="_blank"> parse </a> (${entry.size} bytes)`;
         fileList.innerHTML += `<li>${link}</li>`;
       });
     }

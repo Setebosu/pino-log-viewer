@@ -2,23 +2,19 @@ import pino from 'pino';
 import Fastify from 'fastify';
 
 import path from 'node:path';
-import readline from 'node:readline';
 import { fileURLToPath } from 'url';
-import { lstat, rm } from 'node:fs/promises';
-
-import {
-  createReadStream, existsSync, mkdirSync, readdirSync,
-} from 'node:fs';
+import { existsSync } from 'node:fs';
+import { lstat, rm, mkdir, readdir } from 'node:fs/promises';
 
 import AdmZip from 'adm-zip';
 
 import timestampWithTimeZone from './utils/timestampWithTimeZone.js';
+import readLogLines from './utils/readLogLines.js';
+import collectLogFiles from './utils/collectLogFiles.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(dirname, 'public');
 const logsDir = path.join(dirname, 'log');
-
-const limit = 200000;
 
 const logger = pino({
   level: 'trace', // minimal log level to write
@@ -47,7 +43,7 @@ await app.register(import('@fastify/multipart'), {
 
 app.post('/upload', async (req, reply) => {
   await rm(logsDir, { recursive: true, force: true });
-  mkdirSync(logsDir, { recursive: true });
+  await mkdir(logsDir, { recursive: true });
   const parts = req.parts();
   const part = await parts.next();
 
@@ -55,7 +51,6 @@ app.post('/upload', async (req, reply) => {
     return reply.status(400).send('No .zip file uploaded');
   }
 
-  // const buffer = await part.toBuffer();
   const buffer = await part.value.toBuffer();
   const zip = new AdmZip(buffer);
   zip.extractAllTo(logsDir, true);
@@ -63,14 +58,18 @@ app.post('/upload', async (req, reply) => {
   return reply.status(200).send('Zip extracted to logs folder');
 });
 
-app.get('/clear-logs', async (req, reply) => {
-  await rm(logsDir, { recursive: true, force: true });
-  return reply.status(200).send('All logs deleted');
+const cache = {};
+
+app.delete('/logs/*', async (req, reply) => {
+  const filepath = path.join(logsDir, req.params['*'] || '');
+  await rm(filepath, { recursive: true, force: true });
+  await mkdir(logsDir, { recursive: true });
+  Object.keys(cache).forEach(key => delete cache[key]); // clear cache
+  return reply.status(200).send('logs deleted successfully');
 });
 
-app.get('/logger-file/*', async (req, reply) => {
-  const { level } = req.query || {};
-  mkdirSync(logsDir, { recursive: true });
+app.get('/logs/*', async (req, reply) => {
+  const { level, list } = req.query || {};
 
   const filepath = path.join(logsDir, req.params['*'] || '');
 
@@ -81,47 +80,34 @@ app.get('/logger-file/*', async (req, reply) => {
   const stat = await lstat(filepath);
   const isFile = stat.isFile();
 
-  console.log('isFile', isFile, filepath, stat.size);
-
   if (isFile) {
-    const lines = await new Promise((resolve) => {
-      const rl = readline.createInterface({
-        input: createReadStream(filepath, { start: stat.size > limit ? stat.size - limit : 0 }),
-      });
-      const lines1 = [];
-      rl.on('close', () => resolve(lines1));
-      rl.on('line', (line) => {
-        try {
-          lines1.push(JSON.parse(line.replace(/\u0000/g, '')))
-        } catch (err) {
-          console.error('Error parsing line:', err.toString(), line);
-          lines1.push({ msg: line, level: 'error', parse: false }); // Store raw line if parsing fails
-        }
-      });
-    });
-
-    const rows = level ? lines.filter(line => line.level && line.level === level) : lines;
-
-    reply.headers({ 'Content-type': 'application/json; charset=UTF-8' });
-
-    const result = stat.size > limit && rows.length > 1
-      ? rows.reverse().slice(0, -1)
-      : rows.reverse();
-
-    return reply.status(200).send(result);
+    const rows = cache[filepath] || await readLogLines(filepath, level);
+    if (!cache[filepath]) { cache[filepath] = rows; }
+    return reply.headers({ 'Content-type': 'application/json; charset=UTF-8' }).send(rows);
   }
 
-  const content = readdirSync(filepath, { withFileTypes: true });
+  // to browse between log subdirectories and files
+  if (list) {
+    const content = cache[filepath] ? [] : await readdir(filepath, { withFileTypes: true });
+    const list = cache[filepath] || await Promise.all(content.map(async item => (
+      {
+        name: item.name,
+        type: item.isDirectory() ? 'dir' : 'file',
+        size: item.isFile() ? (await lstat(path.join(filepath, item.name))).size : 0,
+        path: path.join(req.params['*'] || '', item.name).replace(/\\/g, '/')
+      })));
+  
+    if (!cache[filepath]) { cache[filepath] = list; }
+    return list;
+  }
 
-  const list = await Promise.all(content.map(async item => (
-    {
-      name: item.name,
-      type: item.isDirectory() ? 'dir' : 'file',
-      size: item.isFile() ? (await lstat(path.join(filepath, item.name))).size : 0,
-      path: path.join(req.params['*'] || '', item.name).replace(/\\/g, '/')
-    })));
+  // to collect log files and read them
+  const logFiles = stat.isDirectory() 
+    ? await collectLogFiles(filepath) 
+    : [filepath];
 
-  return list;
+  const allLogs = (await Promise.all(logFiles.map(fp => readLogLines(fp, level)))).flat();
+  return allLogs;
 });
 
 // Start server
