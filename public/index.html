@@ -231,7 +231,7 @@
       list.forEach(entry => {
         const link = entry.type === 'dir'
           ? `<a href="#" onclick="listLogs('${entry.path}')">${entry.name}/</a>`
-          : `<a href="#" onclick="updateView('${entry.path}')">${entry.name}</a> (${entry.size} bytes)`; // `<a href="/logger-file/${entry.path}">${entry.name}</a> (${entry.size} bytes)`
+          : `${entry.path} <a href="#" onclick="updateView('${entry.path}')"> preview </a><a href="/logger-file/${entry.path}" target="_blank">parse</a> (${entry.size} bytes)`;
         fileList.innerHTML += `<li>${link}</li>`;
       });
     }

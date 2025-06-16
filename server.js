@@ -4,10 +4,10 @@ import Fastify from 'fastify';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'url';
-import { lstat } from 'node:fs/promises';
+import { lstat, rm } from 'node:fs/promises';
 
 import {
-  createReadStream, existsSync, mkdirSync, readdirSync, rmSync,
+  createReadStream, existsSync, mkdirSync, readdirSync,
 } from 'node:fs';
 
 import AdmZip from 'adm-zip';
@@ -39,9 +39,15 @@ const host = '0.0.0.0';
 const port = 3000;
 
 await app.register(import('@fastify/static'), { root: rootDir, prefix: '/' }); // pages
-await app.register(import('@fastify/multipart')); // upload parser
+await app.register(import('@fastify/multipart'), {
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 500 MB limit
+  }
+}); // upload parser
 
 app.post('/upload', async (req, reply) => {
+  await rm(logsDir, { recursive: true, force: true });
+  mkdirSync(logsDir, { recursive: true });
   const parts = req.parts();
   const part = await parts.next();
 
@@ -58,12 +64,7 @@ app.post('/upload', async (req, reply) => {
 });
 
 app.get('/clear-logs', async (req, reply) => {
-  rmSync(logsDir, { recursive: true, force: true }, err => {
-    if (err) {
-      console.error('Error deleting logs:', err.toString());
-      return reply.status(500).send('Error deleting logs');
-    }
-  });
+  await rm(logsDir, { recursive: true, force: true });
   return reply.status(200).send('All logs deleted');
 });
 
@@ -90,12 +91,12 @@ app.get('/logger-file/*', async (req, reply) => {
       const lines1 = [];
       rl.on('close', () => resolve(lines1));
       rl.on('line', (line) => {
-        try { 
+        try {
           lines1.push(JSON.parse(line.replace(/\u0000/g, '')))
-        } catch(err) {
+        } catch (err) {
           console.error('Error parsing line:', err.toString(), line);
           lines1.push({ msg: line, level: 'error', parse: false }); // Store raw line if parsing fails
-        } 
+        }
       });
     });
 
