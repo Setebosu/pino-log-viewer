@@ -1,4 +1,5 @@
-📊 Pino Log Viewer
+# 📊 Pino Log Viewer
+
 A simple web-based log viewer and dashboard built with Fastify and vanilla HTML/JS.
 
 ✅ Upload .zip files of logs
@@ -25,9 +26,7 @@ A simple web-based log viewer and dashboard built with Fastify and vanilla HTML/
 
 * 🧭 File browser with nested folder support
 
-* 🔍 Filter logs by level (debug, info, error, etc.)
-
-* ⏱ Filter logs by time range (last hour, 6h, 24h)
+* 🔍 Filter logs by level (debug, info, error, etc.), name, time etc.
 
 * 📊 Dashboards
 
@@ -38,5 +37,5 @@ A simple web-based log viewer and dashboard built with Fastify and vanilla HTML/
 | Route                    | Description                   |
 | ------------------------ | ----------------------------- |
 | `POST /upload`   | Upload a `.zip` with logs to `/log` directory     |
-| `GET /logger-file/*`   | List files/folders/logs in `/log` directory |
-| `GET /clear-logs`       | Delete all logs               |
+| `GET /logs/*`   | List content/logs in `/log` directory |
+| `DELETE /logs/*`       | Delete logs               |
