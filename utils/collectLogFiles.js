@@ -7,7 +7,7 @@ export default async function collectLogFiles(dirpath) {
     const nested = await Promise.all(entries.map(async (entry) => {
       const fullPath = path.join(dirpath, entry.name);
   
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && entry.name !== '__MACOSX') {
         return collectLogFiles(fullPath);
       }
   

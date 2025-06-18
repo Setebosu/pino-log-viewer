@@ -3,11 +3,12 @@ import { lstat } from 'node:fs/promises';
 
 import { createReadStream } from 'node:fs';
 
-const limit = 200000; // ~20MB
+const maxSize = 200000;
+const maxLineLimit = 50;
 
 export default async function readLogLines(filepath, level) {
     const { size = 0 } = await lstat(filepath);
-    const startOffset = size > limit ? size - limit : 0;
+    const startOffset = size > maxSize ? size - maxSize : 0;
   
     return new Promise((resolve) => {
       const stream = createReadStream(filepath, { start: startOffset });
@@ -23,9 +24,9 @@ export default async function readLogLines(filepath, level) {
           lines.push(log);
         } catch (err) {
           console.error('Error parsing line:', err.message, cleaned);
-          lines.push({ msg: cleaned, level: 'error', parse: false });
+          // lines.push({ msg: cleaned, level: 'error', parse: false });
         }
-        if (lines.length >= limit) {
+        if (lines.length >= maxLineLimit) {
           rl.close(); // stop reading more
           stream.destroy(); // close stream early
         }

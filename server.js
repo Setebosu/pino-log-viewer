@@ -68,6 +68,26 @@ app.delete('/logs/*', async (req, reply) => {
   return reply.status(200).send('logs deleted successfully');
 });
 
+app.get('/logs-to-graphana', async (req, reply) => {
+  // to collect log files and read them
+  const logFiles = await collectLogFiles(logsDir);
+  const allLogs = (await Promise.all(logFiles.map(fp => readLogLines(fp)))).flat();
+  if (req.query?.debug) return allLogs;
+  return allLogs;
+  
+// const body = JSON.stringify({ streams: [{ stream: { Language: 'NodeJS', source: 'Code' }, values: [[(Math.floor(Date.now() / 1000) * 1000000000).toString(), "This is my log line"]]}] });
+const body = JSON.stringify({ streams: [{ stream: { Language: 'NodeJS', source: 'Code' }, values: allLogs }] });
+
+const response = await fetch("https://logs-prod-025.grafana.net/loki/api/v1/push", {
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer 1250775:your-api-key',
+    },
+    body,
+})
+});
+
 app.get('/logs/*', async (req, reply) => {
   const { level, list } = req.query || {};
 
@@ -111,11 +131,12 @@ app.get('/logs/*', async (req, reply) => {
 });
 
 // Start server
-app.listen({ host, port }, err => {
+app.listen({ host, port }, (err, address) => {
   if (err) {
     console.error(err.toString());
     logger.error(err);
     process.exit(1);
   }
+  console.log('address: ', address);
   console.log(`Server running at http://${host}:${port}`);
 });
